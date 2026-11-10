@@ -32,6 +32,7 @@ try:
         shape_fn = SHAPE_FNS[elem_type]
         dofs = dpn*nnodes                       # total number of dofs
         gauss = quadrature(2,data['gauss']) # quadrature data structure
+        a_param, b_param = data.get('params', [1.0, 0.5]) # optional parameters for body force
 
 except IndexError:
     print('Usage: python efem.py <filename>')
@@ -87,7 +88,7 @@ for e, conn in enumerate(elems):
         k += gauss.wgt[i] * j * np.dot(np.dot(BB.T, matDT), BB) 
 
         x = np.dot(N,X)[0] # isoparametric mapping - we get the location of the gauss point 
-        f += gauss.wgt[i] * j * N * body_force(x, 1, 0.5) # local force vector contribution from the body force
+        f += gauss.wgt[i] * j * N * body_force(x, a_param, b_param) # local force vector contribution from the body force
 
     # add contribution to global stiffness matrix
     K[eft[:, np.newaxis], eft] += k
