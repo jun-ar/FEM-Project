@@ -30,7 +30,11 @@ try:
         nelems, etype = elems.shape             # element count and element type
         elem_type = data['element']
         shape_fn = SHAPE_FNS[elem_type]
-        dofs = dpn*nnodes                       # total number of dofs
+
+        p = data.get('order', 1)
+        n_bubbles = (p - 1) if elem_type == 'linep' else 0
+        dofs = dpn * (nnodes + nelems * n_bubbles)  # total number of dofs including bubbles
+        
         gauss = quadrature(2,data['gauss']) # quadrature data structure
         a_param, b_param = data.get('params', [1.0, 0.5]) # optional parameters for body force
 
@@ -60,21 +64,25 @@ for e, conn in enumerate(elems):
 
     # coordinate array for the element
     X = nodes[conn]     # we get the global coordinates of the nodes for the current element
-    ldofs = dpn*len(conn)  # number of local degrees of freedom for the element
+    ldofs = dpn*(len(conn) + n_bubbles)  # number of local degrees of freedom for the element
+    nodal_eft = [dpn * n + i for n in conn for i in range(dpn)]
+    bubble_start = dpn * (nnodes + e * n_bubbles)  # starting index for bubble dofs
+    bubble_eft = [bubble_start + k for k in range(dpn * n_bubbles)] 
     k = np.zeros((ldofs, ldofs)) # local stiffness matrix 
     f = np.zeros(ldofs)          # local force vector 
 
     # get element degree of freedom array
-    eft = np.array([dpn * n + i for n in conn for i in range(dpn)]) 
+    eft = np.array(nodal_eft + bubble_eft, dtype=int)
 
     # loop over gauss points
     for i, xi in enumerate(gauss.xi):
 
         # compute global coordinate, shape functions and their derivatives
-        N, dN = shape_fn(xi, X)
-
+        N, dN = shape_fn(xi, X, p=p) if elem_type == 'linep' else shape_fn(xi, X)
+        n_geom = len(conn)
+        
         # compute jacobian
-        Jinv, j = jacobian(X, dN)
+        Jinv, j = jacobian(X, dN[:n_geom])
 
         # shape functions derivatives with respect to global coordinates
         B = np.dot(dN, Jinv)
@@ -87,7 +95,7 @@ for e, conn in enumerate(elems):
 
         k += gauss.wgt[i] * j * np.dot(np.dot(BB.T, matDT), BB) 
 
-        x = np.dot(N,X)[0] # isoparametric mapping - we get the location of the gauss point 
+        x = np.dot(N[:n_geom], X)[0] # isoparametric mapping - we get the location of the gauss point 
         f += gauss.wgt[i] * j * N * body_force(x, a_param, b_param) # local force vector contribution from the body force
 
     # add contribution to global stiffness matrix
@@ -117,17 +125,19 @@ U = spsolve(K.tocsr(), F)
 
 # output file to vtk legacy (easier) format
 filepath,_ = os.path.splitext(filename)
+
 Uh = 0.5 * (U @ (K_orig @ U)) # compute strain energy
+np.savez(filepath + "_out.npz", x=nodes[:, 0], u=U, Uh=Uh, p=p)
 
 print(f"-- Strain energy: {Uh}")
-print("Exact strain energy: 0.1397797556255038")
+# print("Exact strain energy: 0.1397797556255038")
 
-vtk = {'line2': 3, 'line3': 21}  # map etype to vtk element type
+vtk = {'line2': 3, 'line3': 21, 'linep': 3, 'tri3': 5, 'quad4': 9 }  # map etype to vtk element type
 
 # modify data structures since vtk requires 3 components
 nodes = np.hstack([nodes, np.zeros([len(nodes), 3 - dpn])]) if dpn != 3 else nodes
-U = np.reshape(U, (nnodes, dpn))
-U = np.hstack([U, np.zeros([len(U), 3 - dpn])]) if dpn != 3 else U
+U_vtk = np.reshape(U[:dpn * nnodes], (nnodes, dpn))
+U_vtk = np.hstack([U_vtk, np.zeros([len(U_vtk), 3 - dpn])]) if dpn != 3 else U_vtk
 
 outfile = filepath + ".vtk"
 with open(outfile, 'w') as f:
