@@ -2,6 +2,7 @@ import sys, os, json, inspect
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
+from scipy.linalg import eigh
 
 from gauss import quadrature
 from elastic import constitutive
@@ -123,11 +124,22 @@ F[zero] = bcs[1]                 # prescribed values
 print("-- Solving system of equations...")
 U = spsolve(K.tocsr(), F)
 
+constrained = np.unique(np.asarray(bcs[0], dtype=int))
+free = np.setdiff1d(np.arange(dofs), constrained)
+K_ff = K_orig.toarray()[np.ix_(free, free)]
+
+eigvals = eigh(K_ff, eigvals_only=True)
+lam_min = eigvals[0]
+lam_max = eigvals[-1]
+cond_K = lam_max / lam_min
+
+print(f"-- Condition number of the stiffness matrix: {cond_K:.4e}")
+
 # output file to vtk legacy (easier) format
 filepath,_ = os.path.splitext(filename)
 
 Uh = 0.5 * (U @ (K_orig @ U)) # compute strain energy
-np.savez(filepath + "_out.npz", x=nodes[:, 0], u=U, Uh=Uh, p=p)
+np.savez(filepath + "_out.npz", x=nodes[:, 0], u=U, Uh=Uh, p=p, cond_K=cond_K)
 
 print(f"-- Strain energy: {Uh}")
 # print("Exact strain energy: 0.1397797556255038")
